@@ -362,7 +362,7 @@ class SearchEndpoint(BaseAPIView):
             output_field=CharField(),
         )
     
-        def _search_project_user_mentions(self, slug, project_id, query, count):
+    def _search_project_user_mentions(self, slug, project_id, query, count):
         q = self._build_icontains_query(
             [
                 "member__first_name",
@@ -501,77 +501,19 @@ class SearchEndpoint(BaseAPIView):
         if project_id:
             for query_type in query_types:
                 if query_type == "user_mention":
-                    q = self._build_icontains_query(
-                        [
-                            "member__first_name",
-                            "member__last_name",
-                            "member__display_name",
-                        ],
-                        query,
+                    response_data["user_mention"] = self._search_project_user_mentions(
+                        slug, project_id, query, count
                     )
-
-                    users = (
-                        ProjectMember.objects.filter(
-                            q,
-                            is_active=True,
-                            workspace__slug=slug,
-                            member__is_bot=False,
-                            project_id=project_id,
-                        )
-                        .annotate(
-                            member__avatar_url=self._member_avatar_url_annotation(CharField())
-                        )
-                        .order_by("-created_at")
-                    )
-
-                    users = users.distinct().values(
-                        "member__avatar_url",
-                        "member__display_name",
-                        "member__id",
-                    )
-
-                    response_data["user_mention"] = list(users[:count])
 
                 elif query_type == "project":
-                    q = self._build_icontains_query(["name", "identifier"], query)
-
-                    projects = (
-                        Project.objects.filter(
-                            q,
-                            Q(project_projectmember__member=self.request.user) | Q(network=2),
-                            workspace__slug=slug,
-                        )
-                        .order_by("-created_at")
-                        .distinct()
-                        .values("name", "id", "identifier", "logo_props", "workspace__slug")[:count]
+                    response_data["project"] = self._search_projects(
+                        slug, query, count
                     )
-                    response_data["project"] = list(projects)
 
                 elif query_type == "issue":
-                    q = self._build_issue_query(query)
-
-                    issues = (
-                        Issue.issue_objects.filter(
-                            q,
-                            project__project_projectmember__member=self.request.user,
-                            project__project_projectmember__is_active=True,
-                            workspace__slug=slug,
-                            project_id=project_id,
-                        )
-                        .order_by("-created_at")
-                        .distinct()
-                        .values(
-                            "name",
-                            "id",
-                            "sequence_id",
-                            "project__identifier",
-                            "project_id",
-                            "priority",
-                            "state_id",
-                            "type_id",
-                        )[:count]
+                    response_data["issue"] = self._search_project_issues(
+                        slug, project_id, query, count
                     )
-                    response_data["issue"] = list(issues)
 
                 elif query_type == "cycle":
                     q = self._build_icontains_query(["name"], query)
@@ -651,69 +593,19 @@ class SearchEndpoint(BaseAPIView):
         else:
             for query_type in query_types:
                 if query_type == "user_mention":
-                    q = self._build_icontains_query(
-                        [
-                            "member__first_name",
-                            "member__last_name",
-                            "member__display_name",
-                        ],
-                        query,
+                    response_data["user_mention"] = self._search_workspace_user_mentions(
+                        slug, query, count
                     )
-
-                    users = (
-                        WorkspaceMember.objects.filter(
-                            q,
-                            is_active=True,
-                            workspace__slug=slug,
-                            member__is_bot=False,
-                        )
-                        .annotate(
-                            member__avatar_url=self._member_avatar_url_annotation(models.CharField())
-                        )
-                        .order_by("-created_at")
-                        .values("member__avatar_url", "member__display_name", "member__id")[:count]
-                    )
-                    response_data["user_mention"] = list(users)
 
                 elif query_type == "project":
-                    q = self._build_icontains_query(["name", "identifier"], query)
-
-                    projects = (
-                        Project.objects.filter(
-                            q,
-                            Q(project_projectmember__member=self.request.user) | Q(network=2),
-                            workspace__slug=slug,
-                        )
-                        .order_by("-created_at")
-                        .distinct()
-                        .values("name", "id", "identifier", "logo_props", "workspace__slug")[:count]
+                    response_data["project"] = self._search_projects(
+                        slug, query, count
                     )
-                    response_data["project"] = list(projects)
 
                 elif query_type == "issue":
-                    q = self._build_issue_query(query)
-
-                    issues = (
-                        Issue.issue_objects.filter(
-                            q,
-                            project__project_projectmember__member=self.request.user,
-                            project__project_projectmember__is_active=True,
-                            workspace__slug=slug,
-                        )
-                        .order_by("-created_at")
-                        .distinct()
-                        .values(
-                            "name",
-                            "id",
-                            "sequence_id",
-                            "project__identifier",
-                            "project_id",
-                            "priority",
-                            "state_id",
-                            "type_id",
-                        )[:count]
+                    response_data["issue"] = self._search_workspace_issues(
+                        slug, query, count
                     )
-                    response_data["issue"] = list(issues)
 
                 elif query_type == "cycle":
                     q = self._build_icontains_query(["name"], query)
