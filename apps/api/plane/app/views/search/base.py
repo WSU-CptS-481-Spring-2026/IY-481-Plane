@@ -302,6 +302,66 @@ class GlobalSearchEndpoint(BaseAPIView):
 
 
 class SearchEndpoint(BaseAPIView):
+    def _build_icontains_query(self, fields, query):
+        q = Q()
+        if query:
+            for field in fields:
+                q |= Q(**{f"{field}__icontains": query})
+        return q
+
+    def _build_issue_query(self, query):
+        fields = ["name", "sequence_id", "project__identifier"]
+        q = Q()
+
+        if query:
+            for field in fields:
+                if field == "sequence_id":
+                    sequences = re.findall(r"\b\d+\b", query)
+                    for sequence_id in sequences:
+                        q |= Q(sequence_id=sequence_id)
+                else:
+                    q |= Q(**{f"{field}__icontains": query})
+
+        return q
+
+    def _member_avatar_url_annotation(self, output_field):
+        return Case(
+            When(
+                member__avatar_asset__isnull=False,
+                then=Concat(
+                    Value("/api/assets/v2/static/"),
+                    "member__avatar_asset",
+                    Value("/"),
+                ),
+            ),
+            When(
+                member__avatar_asset__isnull=True,
+                then="member__avatar",
+            ),
+            default=Value(None),
+            output_field=output_field,
+        )
+
+    def _cycle_status_annotation(self):
+        now = timezone.now()
+        return Case(
+            When(
+                Q(start_date__lte=now) & Q(end_date__gte=now),
+                then=Value("CURRENT"),
+            ),
+            When(
+                start_date__gt=now,
+                then=Value("UPCOMING"),
+            ),
+            When(end_date__lt=now, then=Value("COMPLETED")),
+            When(
+                Q(start_date__isnull=True) & Q(end_date__isnull=True),
+                then=Value("DRAFT"),
+            ),
+            default=Value("DRAFT"),
+            output_field=CharField(),
+        )
+
     def get(self, request, slug):
         query = request.query_params.get("query", False)
         query_types = request.query_params.get("query_type", "user_mention").split(",")
@@ -314,17 +374,14 @@ class SearchEndpoint(BaseAPIView):
         if project_id:
             for query_type in query_types:
                 if query_type == "user_mention":
-                    fields = [
-                        "member__first_name",
-                        "member__last_name",
-                        "member__display_name",
-                    ]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
-
+                    q = self._build_icontains_query(
+                        [
+                            "member__first_name",
+                            "member__last_name",
+                            "member__display_name",
+                        ],
+                        query,
+                    )
                     users = (
                         ProjectMember.objects.filter(
                             q,
@@ -526,17 +583,14 @@ class SearchEndpoint(BaseAPIView):
 
         else:
             for query_type in query_types:
-                if query_type == "user_mention":
-                    fields = [
-                        "member__first_name",
-                        "member__last_name",
-                        "member__display_name",
-                    ]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(
+                        [
+                            "member__first_name",
+                            "member__last_name",
+                            "member__display_name",
+                        ],
+                        query,
+                    )
                     users = (
                         WorkspaceMember.objects.filter(
                             q,
