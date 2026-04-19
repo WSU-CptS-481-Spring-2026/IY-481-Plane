@@ -209,6 +209,18 @@ class IssueViewSet(BaseViewSet):
         ).distinct()
 
         return issues
+    
+    def _guest_member_queryset(self, slug, project_id):
+        return ProjectMember.objects.filter(
+            workspace__slug=slug,
+            project_id=project_id,
+            member=self.request.user,
+            role=5,
+            is_active=True,
+        )
+
+    def _is_guest_restricted(self, slug, project_id, project):
+        return self._guest_member_queryset(slug, project_id).exists() and not project.guest_view_all_features
 
     def apply_annotations(self, issues):
         issues = (
@@ -294,16 +306,8 @@ class IssueViewSet(BaseViewSet):
             entity_identifier=project_id,
             user_id=request.user.id,
         )
-        if (
-            ProjectMember.objects.filter(
-                workspace__slug=slug,
-                project_id=project_id,
-                member=request.user,
-                role=5,
-                is_active=True,
-            ).exists()
-            and not project.guest_view_all_features
-        ):
+        
+        if self._is_guest_restricted(slug, project_id, project):
             issue_queryset = issue_queryset.filter(created_by=request.user)
             filtered_issue_queryset = filtered_issue_queryset.filter(created_by=request.user)
 
@@ -584,17 +588,7 @@ class IssueViewSet(BaseViewSet):
         the requesting user then dont show the issue
         """
 
-        if (
-            ProjectMember.objects.filter(
-                workspace__slug=slug,
-                project_id=project_id,
-                member=request.user,
-                role=5,
-                is_active=True,
-            ).exists()
-            and not project.guest_view_all_features
-            and not issue.created_by == request.user
-        ):
+        if self._is_guest_restricted(slug, project_id, project) and issue.created_by != request.user:
             return Response(
                 {"error": "You are not allowed to view this issue"},
                 status=status.HTTP_403_FORBIDDEN,
