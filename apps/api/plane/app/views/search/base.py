@@ -361,6 +361,133 @@ class SearchEndpoint(BaseAPIView):
             default=Value("DRAFT"),
             output_field=CharField(),
         )
+    
+        def _search_project_user_mentions(self, slug, project_id, query, count):
+        q = self._build_icontains_query(
+            [
+                "member__first_name",
+                "member__last_name",
+                "member__display_name",
+            ],
+            query,
+        )
+
+        users = (
+            ProjectMember.objects.filter(
+                q,
+                is_active=True,
+                workspace__slug=slug,
+                member__is_bot=False,
+                project_id=project_id,
+            )
+            .annotate(
+                member__avatar_url=self._member_avatar_url_annotation(CharField())
+            )
+            .order_by("-created_at")
+        )
+
+        users = users.distinct().values(
+            "member__avatar_url",
+            "member__display_name",
+            "member__id",
+        )
+
+        return list(users[:count])
+
+    def _search_workspace_user_mentions(self, slug, query, count):
+        q = self._build_icontains_query(
+            [
+                "member__first_name",
+                "member__last_name",
+                "member__display_name",
+            ],
+            query,
+        )
+
+        users = (
+            WorkspaceMember.objects.filter(
+                q,
+                is_active=True,
+                workspace__slug=slug,
+                member__is_bot=False,
+            )
+            .annotate(
+                member__avatar_url=self._member_avatar_url_annotation(models.CharField())
+            )
+            .order_by("-created_at")
+            .values("member__avatar_url", "member__display_name", "member__id")[:count]
+        )
+
+        return list(users)
+
+    def _search_projects(self, slug, query, count):
+        q = self._build_icontains_query(["name", "identifier"], query)
+
+        projects = (
+            Project.objects.filter(
+                q,
+                Q(project_projectmember__member=self.request.user) | Q(network=2),
+                workspace__slug=slug,
+            )
+            .order_by("-created_at")
+            .distinct()
+            .values("name", "id", "identifier", "logo_props", "workspace__slug")[:count]
+        )
+
+        return list(projects)
+
+    def _search_project_issues(self, slug, project_id, query, count):
+        q = self._build_issue_query(query)
+
+        issues = (
+            Issue.issue_objects.filter(
+                q,
+                project__project_projectmember__member=self.request.user,
+                project__project_projectmember__is_active=True,
+                workspace__slug=slug,
+                project_id=project_id,
+            )
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "sequence_id",
+                "project__identifier",
+                "project_id",
+                "priority",
+                "state_id",
+                "type_id",
+            )[:count]
+        )
+
+        return list(issues)
+
+    def _search_workspace_issues(self, slug, query, count):
+        q = self._build_issue_query(query)
+
+        issues = (
+            Issue.issue_objects.filter(
+                q,
+                project__project_projectmember__member=self.request.user,
+                project__project_projectmember__is_active=True,
+                workspace__slug=slug,
+            )
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "sequence_id",
+                "project__identifier",
+                "project_id",
+                "priority",
+                "state_id",
+                "type_id",
+            )[:count]
+        )
+
+        return list(issues)
 
     def get(self, request, slug):
         query = request.query_params.get("query", False)
