@@ -488,6 +488,156 @@ class SearchEndpoint(BaseAPIView):
         )
 
         return list(issues)
+    
+    def _search_project_cycles(self, slug, project_id, query, count):
+        q = self._build_icontains_query(["name"], query)
+
+        cycles = (
+            Cycle.objects.filter(
+                q,
+                project__project_projectmember__member=self.request.user,
+                project__project_projectmember__is_active=True,
+                workspace__slug=slug,
+                project_id=project_id,
+            )
+            .annotate(status=self._cycle_status_annotation())
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "project_id",
+                "project__identifier",
+                "status",
+                "workspace__slug",
+            )[:count]
+        )
+
+        return list(cycles)
+
+    def _search_workspace_cycles(self, slug, query, count):
+        q = self._build_icontains_query(["name"], query)
+
+        cycles = (
+            Cycle.objects.filter(
+                q,
+                project__project_projectmember__member=self.request.user,
+                project__project_projectmember__is_active=True,
+                workspace__slug=slug,
+            )
+            .annotate(status=self._cycle_status_annotation())
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "project_id",
+                "project__identifier",
+                "status",
+                "workspace__slug",
+            )[:count]
+        )
+
+        return list(cycles)
+
+    def _search_project_modules(self, slug, project_id, query, count):
+        q = self._build_icontains_query(["name"], query)
+
+        modules = (
+            Module.objects.filter(
+                q,
+                project__project_projectmember__member=self.request.user,
+                project__project_projectmember__is_active=True,
+                workspace__slug=slug,
+                project_id=project_id,
+            )
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "project_id",
+                "project__identifier",
+                "status",
+                "workspace__slug",
+            )[:count]
+        )
+
+        return list(modules)
+
+    def _search_workspace_modules(self, slug, query, count):
+        q = self._build_icontains_query(["name"], query)
+
+        modules = (
+            Module.objects.filter(
+                q,
+                project__project_projectmember__member=self.request.user,
+                project__project_projectmember__is_active=True,
+                workspace__slug=slug,
+            )
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "project_id",
+                "project__identifier",
+                "status",
+                "workspace__slug",
+            )[:count]
+        )
+
+        return list(modules)
+
+    def _search_project_pages(self, slug, project_id, query, count):
+        q = self._build_icontains_query(["name"], query)
+
+        pages = (
+            Page.objects.filter(
+                q,
+                projects__project_projectmember__member=self.request.user,
+                projects__project_projectmember__is_active=True,
+                projects__id=project_id,
+                workspace__slug=slug,
+                access=0,
+            )
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "logo_props",
+                "projects__id",
+                "workspace__slug",
+            )[:count]
+        )
+
+        return list(pages)
+
+    def _search_workspace_pages(self, slug, query, count):
+        q = self._build_icontains_query(["name"], query)
+
+        pages = (
+            Page.objects.filter(
+                q,
+                projects__project_projectmember__member=self.request.user,
+                projects__project_projectmember__is_active=True,
+                workspace__slug=slug,
+                access=0,
+                is_global=True,
+            )
+            .order_by("-created_at")
+            .distinct()
+            .values(
+                "name",
+                "id",
+                "logo_props",
+                "projects__id",
+                "workspace__slug",
+            )[:count]
+        )
+
+        return list(pages)
 
     def get(self, request, slug):
         query = request.query_params.get("query", False)
