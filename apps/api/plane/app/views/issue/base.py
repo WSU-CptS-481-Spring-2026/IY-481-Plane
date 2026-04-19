@@ -327,38 +327,41 @@ class IssueViewSet(BaseViewSet):
                 ),
             )
         )
-
-    @method_decorator(gzip_page)
-    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
-    def list(self, request, slug, project_id):
-        extra_filters = {}
+    
+    def _get_extra_filters(self, request):
         if request.GET.get("updated_at__gt", None) is not None:
-            extra_filters = {"updated_at__gt": request.GET.get("updated_at__gt")}
+            return {"updated_at__gt": request.GET.get("updated_at__gt")}
+        return {}
 
-        project = Project.objects.get(pk=project_id, workspace__slug=slug)
+    def _prepare_issue_list_queryset(self, request):
         query_params = request.query_params.copy()
-
         filters = issue_filters(query_params, "GET")
         order_by_param = request.GET.get("order_by", "-created_at")
 
         issue_queryset = self.get_queryset()
-
-        # Apply rich filters
         issue_queryset = self.filter_queryset(issue_queryset)
+        issue_queryset = issue_queryset.filter(**filters, **self._get_extra_filters(request))
 
-        # Apply legacy filters
-        issue_queryset = issue_queryset.filter(**filters, **extra_filters)
-
-        # Keeping a copy of the queryset before applying annotations
         filtered_issue_queryset = copy.deepcopy(issue_queryset)
-
-        # Applying annotations to the issue queryset
         issue_queryset = self.apply_annotations(issue_queryset)
-
-        # Issue queryset
         issue_queryset, order_by_param = order_issue_queryset(
             issue_queryset=issue_queryset, order_by_param=order_by_param
         )
+
+        return issue_queryset, filtered_issue_queryset, filters, order_by_param
+
+    def _apply_guest_visibility_filter(self, issue_queryset, filtered_issue_queryset, slug, project_id, project):
+        if self._is_guest_restricted(slug, project_id, project):
+            issue_queryset = issue_queryset.filter(created_by=self.request.user)
+            filtered_issue_queryset = filtered_issue_queryset.filter(created_by=self.request.user)
+
+        return issue_queryset, filtered_issue_queryset
+
+    @method_decorator(gzip_page)
+    @allow_permission([ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST])
+    def list(self, request, slug, project_id):
+        project = Project.objects.get(pk=project_id, workspace__slug=slug)
+        issue_queryset, filtered_issue_queryset, filters, order_by_param = self._prepare_issue_list_queryset(request)
 
         # Group by
         group_by = request.GET.get("group_by", False)
@@ -374,10 +377,10 @@ class IssueViewSet(BaseViewSet):
             entity_identifier=project_id,
             user_id=request.user.id,
         )
-        
-        if self._is_guest_restricted(slug, project_id, project):
-            issue_queryset = issue_queryset.filter(created_by=request.user)
-            filtered_issue_queryset = filtered_issue_queryset.filter(created_by=request.user)
+
+        issue_queryset, filtered_issue_queryset = self._apply_guest_visibility_filter(
+            issue_queryset, filtered_issue_queryset, slug, project_id, project
+        )
 
         if group_by:
             if sub_group_by:
