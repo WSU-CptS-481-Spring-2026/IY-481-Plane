@@ -61,11 +61,7 @@ class GlobalSearchEndpoint(BaseAPIView):
         )
 
     def filter_projects(self, query, slug, _project_id, _workspace_search):
-        fields = ["name", "identifier"]
-        q = Q()
-        if query:
-            for field in fields:
-                q |= Q(**{f"{field}__icontains": query})
+        q = self._build_icontains_query(["name", "identifier"], query)
         return (
             Project.objects.filter(
                 q,
@@ -420,12 +416,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["user_mention"] = list(users[:count])
 
                 elif query_type == "project":
-                    fields = ["name", "identifier"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name", "identifier"], query)
                     projects = (
                         Project.objects.filter(
                             q,
@@ -622,12 +613,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["user_mention"] = list(users)
 
                 elif query_type == "project":
-                    fields = ["name", "identifier"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name", "identifier"], query)
                     projects = (
                         Project.objects.filter(
                             q,
