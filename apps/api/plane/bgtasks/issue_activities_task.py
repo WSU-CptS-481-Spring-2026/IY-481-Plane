@@ -105,6 +105,44 @@ def append_removed_entity_activity(
         )
     )
 
+def touch_issue_updated_at(issue_id):
+    issue = Issue.objects.filter(pk=issue_id).first()
+    if issue:
+        issue.updated_at = timezone.now()
+        issue.save(update_fields=["updated_at"])
+
+
+def append_module_activity(
+    issue_activities,
+    issue_id,
+    actor_id,
+    project_id,
+    workspace_id,
+    epoch,
+    verb,
+    comment,
+    old_value,
+    new_value,
+    old_identifier=None,
+    new_identifier=None,
+):
+    issue_activities.append(
+        IssueActivity(
+            issue_id=issue_id,
+            actor_id=actor_id,
+            verb=verb,
+            old_value=old_value,
+            new_value=new_value,
+            field="modules",
+            project_id=project_id,
+            workspace_id=workspace_id,
+            comment=comment,
+            old_identifier=old_identifier,
+            new_identifier=new_identifier,
+            epoch=epoch,
+        )
+    )
+
 # Track Changes in name
 def track_name(
     requested_data,
@@ -915,24 +953,19 @@ def create_module_issue_activity(
 ):
     requested_data = json.loads(requested_data) if requested_data is not None else None
     module = Module.objects.filter(pk=requested_data.get("module_id")).first()
-    issue = Issue.objects.filter(pk=issue_id).first()
-    if issue:
-        issue.updated_at = timezone.now()
-        issue.save(update_fields=["updated_at"])
-    issue_activities.append(
-        IssueActivity(
-            issue_id=issue_id,
-            actor_id=actor_id,
-            verb="created",
-            old_value="",
-            new_value=module.name if module else "",
-            field="modules",
-            project_id=project_id,
-            workspace_id=workspace_id,
-            comment=f"added module {module.name if module else ''}",
-            new_identifier=requested_data.get("module_id"),
-            epoch=epoch,
-        )
+    touch_issue_updated_at(issue_id)
+    append_module_activity(
+        issue_activities=issue_activities,
+        issue_id=issue_id,
+        actor_id=actor_id,
+        project_id=project_id,
+        workspace_id=workspace_id,
+        epoch=epoch,
+        verb="created",
+        comment=f"added module {module.name if module else ''}",
+        old_value="",
+        new_value=module.name if module else "",
+        new_identifier=requested_data.get("module_id"),
     )
 
 
@@ -949,24 +982,19 @@ def delete_module_issue_activity(
     requested_data = json.loads(requested_data) if requested_data is not None else None
     current_instance = json.loads(current_instance) if current_instance is not None else None
     module_name = current_instance.get("module_name")
-    current_issue = Issue.objects.filter(pk=issue_id).first()
-    if current_issue:
-        current_issue.updated_at = timezone.now()
-        current_issue.save(update_fields=["updated_at"])
-    issue_activities.append(
-        IssueActivity(
-            issue_id=issue_id,
-            actor_id=actor_id,
-            verb="deleted",
-            old_value=module_name,
-            new_value="",
-            field="modules",
-            project_id=project_id,
-            workspace_id=workspace_id,
-            comment=f"removed this issue from {module_name}",
-            old_identifier=(requested_data.get("module_id") if requested_data.get("module_id") is not None else None),
-            epoch=epoch,
-        )
+    touch_issue_updated_at(issue_id)
+    append_module_activity(
+        issue_activities=issue_activities,
+        issue_id=issue_id,
+        actor_id=actor_id,
+        project_id=project_id,
+        workspace_id=workspace_id,
+        epoch=epoch,
+        verb="deleted",
+        comment=f"removed this issue from {module_name}",
+        old_value=module_name,
+        new_value="",
+        old_identifier=requested_data.get("module_id") if requested_data.get("module_id") is not None else None,
     )
 
 
