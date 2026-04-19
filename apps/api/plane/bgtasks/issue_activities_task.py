@@ -143,6 +143,37 @@ def append_module_activity(
         )
     )
 
+def append_cycle_activity(
+    issue_activities,
+    issue_id,
+    actor_id,
+    project_id,
+    workspace_id,
+    epoch,
+    verb,
+    comment,
+    old_value,
+    new_value,
+    old_identifier=None,
+    new_identifier=None,
+):
+    issue_activities.append(
+        IssueActivity(
+            issue_id=issue_id,
+            actor_id=actor_id,
+            verb=verb,
+            old_value=old_value,
+            new_value=new_value,
+            field="cycles",
+            project_id=project_id,
+            workspace_id=workspace_id,
+            comment=comment,
+            old_identifier=old_identifier,
+            new_identifier=new_identifier,
+            epoch=epoch,
+        )
+    )
+
 # Track Changes in name
 def track_name(
     requested_data,
@@ -850,55 +881,45 @@ def create_cycle_issue_activity(
 
     # Updated Records:
     updated_records = current_instance.get("updated_cycle_issues", [])
-    created_records = json.loads(current_instance.get("created_cycle_issues", []))
+    created_records = json.loads(current_instance.get("created_cycle_issues", "[]"))
 
     for updated_record in updated_records:
         old_cycle = Cycle.objects.filter(pk=updated_record.get("old_cycle_id", None)).first()
         new_cycle = Cycle.objects.filter(pk=updated_record.get("new_cycle_id", None)).first()
-        issue = Issue.objects.filter(pk=updated_record.get("issue_id")).first()
-        if issue:
-            issue.updated_at = timezone.now()
-            issue.save(update_fields=["updated_at"])
+        touch_issue_updated_at(updated_record.get("issue_id"))
 
-        issue_activities.append(
-            IssueActivity(
-                issue_id=updated_record.get("issue_id"),
-                actor_id=actor_id,
-                verb="updated",
-                old_value=old_cycle.name if old_cycle else "",
-                new_value=new_cycle.name if new_cycle else "",
-                field="cycles",
-                project_id=project_id,
-                workspace_id=workspace_id,
-                comment=f"""updated cycle from {old_cycle.name if old_cycle else ""}
+        append_cycle_activity(
+            issue_activities=issue_activities,
+            issue_id=updated_record.get("issue_id"),
+            actor_id=actor_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            epoch=epoch,
+            verb="updated",
+            comment=f"""updated cycle from {old_cycle.name if old_cycle else ""}
                 to {new_cycle.name if new_cycle else ""}""",
-                old_identifier=old_cycle.id if old_cycle else None,
-                new_identifier=new_cycle.id if new_cycle else None,
-                epoch=epoch,
-            )
+            old_value=old_cycle.name if old_cycle else "",
+            new_value=new_cycle.name if new_cycle else "",
+            old_identifier=old_cycle.id if old_cycle else None,
+            new_identifier=new_cycle.id if new_cycle else None,
         )
 
     for created_record in created_records:
         cycle = Cycle.objects.filter(pk=created_record.get("fields").get("cycle")).first()
-        issue = Issue.objects.filter(pk=created_record.get("fields").get("issue")).first()
-        if issue:
-            issue.updated_at = timezone.now()
-            issue.save(update_fields=["updated_at"])
+        touch_issue_updated_at(created_record.get("fields").get("issue"))
 
-        issue_activities.append(
-            IssueActivity(
-                issue_id=created_record.get("fields").get("issue"),
-                actor_id=actor_id,
-                verb="created",
-                old_value="",
-                new_value=cycle.name,
-                field="cycles",
-                project_id=project_id,
-                workspace_id=workspace_id,
-                comment=f"added cycle {cycle.name}",
-                new_identifier=cycle.id,
-                epoch=epoch,
-            )
+        append_cycle_activity(
+            issue_activities=issue_activities,
+            issue_id=created_record.get("fields").get("issue"),
+            actor_id=actor_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            epoch=epoch,
+            verb="created",
+            comment=f"added cycle {cycle.name}",
+            old_value="",
+            new_value=cycle.name if cycle else "",
+            new_identifier=cycle.id if cycle else None,
         )
 
 
@@ -920,24 +941,19 @@ def delete_cycle_issue_activity(
     cycle = Cycle.objects.filter(pk=cycle_id).first()
     issues = requested_data.get("issues")
     for issue in issues:
-        current_issue = Issue.objects.filter(pk=issue).first()
-        if current_issue:
-            current_issue.updated_at = timezone.now()
-            current_issue.save(update_fields=["updated_at"])
-        issue_activities.append(
-            IssueActivity(
-                issue_id=issue,
-                actor_id=actor_id,
-                verb="deleted",
-                old_value=cycle.name if cycle is not None else cycle_name,
-                new_value="",
-                field="cycles",
-                project_id=project_id,
-                workspace_id=workspace_id,
-                comment=f"removed this issue from {cycle.name if cycle is not None else cycle_name}",
-                old_identifier=cycle_id if cycle_id is not None else None,
-                epoch=epoch,
-            )
+        touch_issue_updated_at(issue)
+        append_cycle_activity(
+            issue_activities=issue_activities,
+            issue_id=issue,
+            actor_id=actor_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            epoch=epoch,
+            verb="deleted",
+            comment=f"removed this issue from {cycle.name if cycle is not None else cycle_name}",
+            old_value=cycle.name if cycle is not None else cycle_name,
+            new_value="",
+            old_identifier=cycle_id if cycle_id is not None else None,
         )
 
 
