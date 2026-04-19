@@ -1184,6 +1184,18 @@ class IssueDetailIdentifierEndpoint(BaseAPIView):
         if not s.isdigit() and not (s.startswith("-") and s[1:].isdigit()):
             raise ValueError("Invalid integer string")
         return int(s)
+    
+    def _guest_member_queryset(self, slug, project_id, user):
+        return ProjectMember.objects.filter(
+            workspace__slug=slug,
+            project_id=project_id,
+            member=user,
+            role=5,
+            is_active=True,
+        )
+
+    def _is_guest_restricted(self, slug, project_id, project, user):
+        return self._guest_member_queryset(slug, project_id, user).exists() and not project.guest_view_all_features
 
     def get(self, request, slug, project_identifier, issue_identifier):
         # Check if the issue identifier is a valid integer
@@ -1319,17 +1331,7 @@ class IssueDetailIdentifierEndpoint(BaseAPIView):
         the requesting user then dont show the issue
         """
 
-        if (
-            ProjectMember.objects.filter(
-                workspace__slug=slug,
-                project_id=project.id,
-                member=request.user,
-                role=5,
-                is_active=True,
-            ).exists()
-            and not project.guest_view_all_features
-            and not issue.created_by == request.user
-        ):
+        if self._is_guest_restricted(slug, project.id, project, request.user) and issue.created_by != request.user:
             return Response(
                 {"error": "You are not allowed to view this issue"},
                 status=status.HTTP_403_FORBIDDEN,
