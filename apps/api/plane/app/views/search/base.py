@@ -61,7 +61,11 @@ class GlobalSearchEndpoint(BaseAPIView):
         )
 
     def filter_projects(self, query, slug, _project_id, _workspace_search):
-        q = self._build_icontains_query(["name", "identifier"], query)
+        fields = ["name", "identifier"]
+        q = Q()
+        if query:
+            for field in fields:
+                q |= Q(**{f"{field}__icontains": query})
         return (
             Project.objects.filter(
                 q,
@@ -378,6 +382,7 @@ class SearchEndpoint(BaseAPIView):
                         ],
                         query,
                     )
+
                     users = (
                         ProjectMember.objects.filter(
                             q,
@@ -387,22 +392,7 @@ class SearchEndpoint(BaseAPIView):
                             project_id=project_id,
                         )
                         .annotate(
-                            member__avatar_url=Case(
-                                When(
-                                    member__avatar_asset__isnull=False,
-                                    then=Concat(
-                                        Value("/api/assets/v2/static/"),
-                                        "member__avatar_asset",
-                                        Value("/"),
-                                    ),
-                                ),
-                                When(
-                                    member__avatar_asset__isnull=True,
-                                    then="member__avatar",
-                                ),
-                                default=Value(None),
-                                output_field=CharField(),
-                            )
+                            member__avatar_url=self._member_avatar_url_annotation(CharField())
                         )
                         .order_by("-created_at")
                     )
@@ -417,6 +407,7 @@ class SearchEndpoint(BaseAPIView):
 
                 elif query_type == "project":
                     q = self._build_icontains_query(["name", "identifier"], query)
+
                     projects = (
                         Project.objects.filter(
                             q,
@@ -430,17 +421,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["project"] = list(projects)
 
                 elif query_type == "issue":
-                    fields = ["name", "sequence_id", "project__identifier"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            if field == "sequence_id":
-                                sequences = re.findall(r"\b\d+\b", query)
-                                for sequence_id in sequences:
-                                    q |= Q(**{"sequence_id": sequence_id})
-                            else:
-                                q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_issue_query(query)
 
                     issues = (
                         Issue.issue_objects.filter(
@@ -466,12 +447,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["issue"] = list(issues)
 
                 elif query_type == "cycle":
-                    fields = ["name"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name"], query)
 
                     cycles = (
                         Cycle.objects.filter(
@@ -481,25 +457,7 @@ class SearchEndpoint(BaseAPIView):
                             workspace__slug=slug,
                             project_id=project_id,
                         )
-                        .annotate(
-                            status=Case(
-                                When(
-                                    Q(start_date__lte=timezone.now()) & Q(end_date__gte=timezone.now()),
-                                    then=Value("CURRENT"),
-                                ),
-                                When(
-                                    start_date__gt=timezone.now(),
-                                    then=Value("UPCOMING"),
-                                ),
-                                When(end_date__lt=timezone.now(), then=Value("COMPLETED")),
-                                When(
-                                    Q(start_date__isnull=True) & Q(end_date__isnull=True),
-                                    then=Value("DRAFT"),
-                                ),
-                                default=Value("DRAFT"),
-                                output_field=CharField(),
-                            )
-                        )
+                        .annotate(status=self._cycle_status_annotation())
                         .order_by("-created_at")
                         .distinct()
                         .values(
@@ -514,12 +472,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["cycle"] = list(cycles)
 
                 elif query_type == "module":
-                    fields = ["name"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name"], query)
 
                     modules = (
                         Module.objects.filter(
@@ -543,12 +496,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["module"] = list(modules)
 
                 elif query_type == "page":
-                    fields = ["name"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name"], query)
 
                     pages = (
                         Page.objects.filter(
@@ -570,10 +518,12 @@ class SearchEndpoint(BaseAPIView):
                         )[:count]
                     )
                     response_data["page"] = list(pages)
+
             return Response(response_data, status=status.HTTP_200_OK)
 
         else:
             for query_type in query_types:
+                if query_type == "user_mention":
                     q = self._build_icontains_query(
                         [
                             "member__first_name",
@@ -582,6 +532,7 @@ class SearchEndpoint(BaseAPIView):
                         ],
                         query,
                     )
+
                     users = (
                         WorkspaceMember.objects.filter(
                             q,
@@ -590,22 +541,7 @@ class SearchEndpoint(BaseAPIView):
                             member__is_bot=False,
                         )
                         .annotate(
-                            member__avatar_url=Case(
-                                When(
-                                    member__avatar_asset__isnull=False,
-                                    then=Concat(
-                                        Value("/api/assets/v2/static/"),
-                                        "member__avatar_asset",
-                                        Value("/"),
-                                    ),
-                                ),
-                                When(
-                                    member__avatar_asset__isnull=True,
-                                    then="member__avatar",
-                                ),
-                                default=Value(None),
-                                output_field=models.CharField(),
-                            )
+                            member__avatar_url=self._member_avatar_url_annotation(models.CharField())
                         )
                         .order_by("-created_at")
                         .values("member__avatar_url", "member__display_name", "member__id")[:count]
@@ -614,6 +550,7 @@ class SearchEndpoint(BaseAPIView):
 
                 elif query_type == "project":
                     q = self._build_icontains_query(["name", "identifier"], query)
+
                     projects = (
                         Project.objects.filter(
                             q,
@@ -627,17 +564,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["project"] = list(projects)
 
                 elif query_type == "issue":
-                    fields = ["name", "sequence_id", "project__identifier"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            if field == "sequence_id":
-                                sequences = re.findall(r"\b\d+\b", query)
-                                for sequence_id in sequences:
-                                    q |= Q(**{"sequence_id": sequence_id})
-                            else:
-                                q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_issue_query(query)
 
                     issues = (
                         Issue.issue_objects.filter(
@@ -662,12 +589,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["issue"] = list(issues)
 
                 elif query_type == "cycle":
-                    fields = ["name"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name"], query)
 
                     cycles = (
                         Cycle.objects.filter(
@@ -676,25 +598,7 @@ class SearchEndpoint(BaseAPIView):
                             project__project_projectmember__is_active=True,
                             workspace__slug=slug,
                         )
-                        .annotate(
-                            status=Case(
-                                When(
-                                    Q(start_date__lte=timezone.now()) & Q(end_date__gte=timezone.now()),
-                                    then=Value("CURRENT"),
-                                ),
-                                When(
-                                    start_date__gt=timezone.now(),
-                                    then=Value("UPCOMING"),
-                                ),
-                                When(end_date__lt=timezone.now(), then=Value("COMPLETED")),
-                                When(
-                                    Q(start_date__isnull=True) & Q(end_date__isnull=True),
-                                    then=Value("DRAFT"),
-                                ),
-                                default=Value("DRAFT"),
-                                output_field=CharField(),
-                            )
-                        )
+                        .annotate(status=self._cycle_status_annotation())
                         .order_by("-created_at")
                         .distinct()
                         .values(
@@ -709,12 +613,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["cycle"] = list(cycles)
 
                 elif query_type == "module":
-                    fields = ["name"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name"], query)
 
                     modules = (
                         Module.objects.filter(
@@ -737,12 +636,7 @@ class SearchEndpoint(BaseAPIView):
                     response_data["module"] = list(modules)
 
                 elif query_type == "page":
-                    fields = ["name"]
-                    q = Q()
-
-                    if query:
-                        for field in fields:
-                            q |= Q(**{f"{field}__icontains": query})
+                    q = self._build_icontains_query(["name"], query)
 
                     pages = (
                         Page.objects.filter(
@@ -764,4 +658,5 @@ class SearchEndpoint(BaseAPIView):
                         )[:count]
                     )
                     response_data["page"] = list(pages)
+
             return Response(response_data, status=status.HTTP_200_OK)
