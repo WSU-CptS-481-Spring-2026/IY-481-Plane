@@ -1203,37 +1203,10 @@ class IssueDetailIdentifierEndpoint(BaseAPIView):
 
     def _is_guest_restricted(self, slug, project_id, project, user):
         return self._guest_member_queryset(slug, project_id, user).exists() and not project.guest_view_all_features
-
-    def get(self, request, slug, project_identifier, issue_identifier):
-        # Check if the issue identifier is a valid integer
-        try:
-            issue_identifier = self.strict_str_to_int(issue_identifier)
-        except ValueError:
-            return Response(
-                {"error": "Invalid issue identifier"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Fetch the project
-        project = Project.objects.get(identifier__iexact=project_identifier, workspace__slug=slug)
-
-        # Check if the user is a member of the project
-        if not ProjectMember.objects.filter(
-            workspace__slug=slug,
-            project_id=project.id,
-            member=request.user,
-            is_active=True,
-        ).exists():
-            return Response(
-                {"error": "You are not allowed to view this issue"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        # Fetch the issue
-        issue = (
-            Issue.objects.filter(project_id=project.id)
-            .filter(workspace__slug=slug)
-            .select_related("workspace", "project", "state", "parent")
+    
+    def _apply_issue_detail_annotations(self, issues):
+        return (
+            issues.select_related("workspace", "project", "state", "parent")
             .prefetch_related("assignees", "labels", "issue_module__module")
             .annotate(cycle_id=Subquery(CycleIssue.objects.filter(issue=OuterRef("id")).values("cycle_id")[:1]))
             .annotate(
@@ -1257,7 +1230,6 @@ class IssueDetailIdentifierEndpoint(BaseAPIView):
                 .annotate(count=Func(F("id"), function="Count"))
                 .values("count")
             )
-            .filter(sequence_id=issue_identifier)
             .annotate(
                 label_ids=Coalesce(
                     ArrayAgg(
@@ -1292,6 +1264,42 @@ class IssueDetailIdentifierEndpoint(BaseAPIView):
                     Value([], output_field=ArrayField(UUIDField())),
                 ),
             )
+        )
+
+    def _issue_detail_queryset(self, slug, project_id):
+        return self._apply_issue_detail_annotations(
+            Issue.objects.filter(project_id=project_id).filter(workspace__slug=slug)
+        )
+
+    def get(self, request, slug, project_identifier, issue_identifier):
+        # Check if the issue identifier is a valid integer
+        try:
+            issue_identifier = self.strict_str_to_int(issue_identifier)
+        except ValueError:
+            return Response(
+                {"error": "Invalid issue identifier"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Fetch the project
+        project = Project.objects.get(identifier__iexact=project_identifier, workspace__slug=slug)
+
+        # Check if the user is a member of the project
+        if not ProjectMember.objects.filter(
+            workspace__slug=slug,
+            project_id=project.id,
+            member=request.user,
+            is_active=True,
+        ).exists():
+            return Response(
+                {"error": "You are not allowed to view this issue"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Fetch the issue
+        issue = (
+            self._issue_detail_queryset(slug, project.id)
+            .filter(sequence_id=issue_identifier)
             .prefetch_related(
                 Prefetch(
                     "issue_reactions",
