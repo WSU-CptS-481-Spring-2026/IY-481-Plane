@@ -46,6 +46,65 @@ def extract_ids(data: dict | None, primary_key: str, fallback_key: str) -> set[s
     return {str(x) for x in data.get(fallback_key, [])}
 
 
+def append_added_entity_activity(
+    issue_activities,
+    issue_id,
+    actor_id,
+    project_id,
+    workspace_id,
+    epoch,
+    field,
+    comment,
+    new_value,
+    new_identifier,
+):
+    issue_activities.append(
+        IssueActivity(
+            issue_id=issue_id,
+            actor_id=actor_id,
+            verb="updated",
+            old_value="",
+            new_value=new_value,
+            field=field,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            comment=comment,
+            old_identifier=None,
+            new_identifier=new_identifier,
+            epoch=epoch,
+        )
+    )
+
+
+def append_removed_entity_activity(
+    issue_activities,
+    issue_id,
+    actor_id,
+    project_id,
+    workspace_id,
+    epoch,
+    field,
+    comment,
+    old_value,
+    old_identifier,
+):
+    issue_activities.append(
+        IssueActivity(
+            issue_id=issue_id,
+            actor_id=actor_id,
+            verb="updated",
+            old_value=old_value,
+            new_value="",
+            field=field,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            comment=comment,
+            old_identifier=old_identifier,
+            new_identifier=None,
+            epoch=epoch,
+        )
+    )
+
 # Track Changes in name
 def track_name(
     requested_data,
@@ -311,21 +370,17 @@ def track_labels(
             continue
 
         label = Label.objects.get(pk=added_label)
-        issue_activities.append(
-            IssueActivity(
-                issue_id=issue_id,
-                actor_id=actor_id,
-                project_id=project_id,
-                workspace_id=workspace_id,
-                verb="updated",
-                field="labels",
-                comment="added label ",
-                old_value="",
-                new_value=label.name,
-                new_identifier=label.id,
-                old_identifier=None,
-                epoch=epoch,
-            )
+        append_added_entity_activity(
+            issue_activities=issue_activities,
+            issue_id=issue_id,
+            actor_id=actor_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            epoch=epoch,
+            field="labels",
+            comment="added label ",
+            new_value=label.name,
+            new_identifier=label.id,
         )
 
     # Set of dropped labels
@@ -335,21 +390,17 @@ def track_labels(
             continue
 
         label = Label.objects.get(pk=dropped_label)
-        issue_activities.append(
-            IssueActivity(
-                issue_id=issue_id,
-                actor_id=actor_id,
-                verb="updated",
-                old_value=label.name,
-                new_value="",
-                field="labels",
-                project_id=project_id,
-                workspace_id=workspace_id,
-                comment="removed label ",
-                old_identifier=label.id,
-                new_identifier=None,
-                epoch=epoch,
-            )
+        append_removed_entity_activity(
+            issue_activities=issue_activities,
+            issue_id=issue_id,
+            actor_id=actor_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            epoch=epoch,
+            field="labels",
+            comment="removed label ",
+            old_value=label.name,
+            old_identifier=label.id,
         )
 
 
@@ -378,20 +429,17 @@ def track_assignees(
             continue
 
         assignee = User.objects.get(pk=added_asignee)
-        issue_activities.append(
-            IssueActivity(
-                issue_id=issue_id,
-                actor_id=actor_id,
-                verb="updated",
-                old_value="",
-                new_value=assignee.display_name,
-                field="assignees",
-                project_id=project_id,
-                workspace_id=workspace_id,
-                comment="added assignee ",
-                new_identifier=assignee.id,
-                epoch=epoch,
-            )
+        append_added_entity_activity(
+            issue_activities=issue_activities,
+            issue_id=issue_id,
+            actor_id=actor_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            epoch=epoch,
+            field="assignees",
+            comment="added assignee ",
+            new_value=assignee.display_name,
+            new_identifier=assignee.id,
         )
         bulk_subscribers.append(
             IssueSubscriber(
@@ -413,20 +461,17 @@ def track_assignees(
             continue
 
         assignee = User.objects.get(pk=dropped_assignee)
-        issue_activities.append(
-            IssueActivity(
-                issue_id=issue_id,
-                actor_id=actor_id,
-                verb="updated",
-                old_value=assignee.display_name,
-                new_value="",
-                field="assignees",
-                project_id=project_id,
-                workspace_id=workspace_id,
-                comment="removed assignee ",
-                old_identifier=assignee.id,
-                epoch=epoch,
-            )
+        append_removed_entity_activity(
+            issue_activities=issue_activities,
+            issue_id=issue_id,
+            actor_id=actor_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            epoch=epoch,
+            field="assignees",
+            comment="removed assignee ",
+            old_value=assignee.display_name,
+            old_identifier=assignee.id,
         )
 
 
