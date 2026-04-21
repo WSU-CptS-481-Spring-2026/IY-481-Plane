@@ -26,7 +26,6 @@ from django.db.models import (
     Sum,
     FloatField,
 )
-from django.db import models
 from django.db.models.functions import Coalesce, Cast, Concat
 from django.utils import timezone
 from django.core.serializers.json import DjangoJSONEncoder
@@ -52,13 +51,20 @@ from plane.db.models import (
     Project,
     UserRecentVisit,
 )
-from plane.utils.analytics_plot import burndown_plot
 from plane.bgtasks.recent_visited_task import recent_visited_task
 from plane.utils.host import base_host
 from plane.utils.cycle_transfer_issues import transfer_cycle_issues
 from .. import BaseAPIView, BaseViewSet
 from plane.bgtasks.webhook_task import model_activity
 from plane.utils.timezone_converter import convert_to_utc, user_timezone_converter
+from .analytics_helpers import (
+    assignee_distribution_issues,
+    assignee_distribution_points,
+    completion_chart_for_cycle,
+    cycle_progress_issue_counts,
+    label_distribution_issues,
+    label_distribution_points,
+)
 
 
 class CycleViewSet(BaseViewSet):
@@ -717,52 +723,13 @@ class CycleProgressEndpoint(BaseAPIView):
             completed_issues = cycle.progress_snapshot.get("completed_issues", 0)
             total_issues = cycle.progress_snapshot.get("total_issues", 0)
         else:
-            backlog_issues = Issue.issue_objects.filter(
-                issue_cycle__cycle_id=cycle_id,
-                issue_cycle__deleted_at__isnull=True,
-                workspace__slug=slug,
-                project_id=project_id,
-                state__group="backlog",
-            ).count()
-
-            unstarted_issues = Issue.issue_objects.filter(
-                issue_cycle__cycle_id=cycle_id,
-                issue_cycle__deleted_at__isnull=True,
-                workspace__slug=slug,
-                project_id=project_id,
-                state__group="unstarted",
-            ).count()
-
-            started_issues = Issue.issue_objects.filter(
-                issue_cycle__cycle_id=cycle_id,
-                issue_cycle__deleted_at__isnull=True,
-                workspace__slug=slug,
-                project_id=project_id,
-                state__group="started",
-            ).count()
-
-            cancelled_issues = Issue.issue_objects.filter(
-                issue_cycle__cycle_id=cycle_id,
-                issue_cycle__deleted_at__isnull=True,
-                workspace__slug=slug,
-                project_id=project_id,
-                state__group="cancelled",
-            ).count()
-
-            completed_issues = Issue.issue_objects.filter(
-                issue_cycle__cycle_id=cycle_id,
-                issue_cycle__deleted_at__isnull=True,
-                workspace__slug=slug,
-                project_id=project_id,
-                state__group="completed",
-            ).count()
-
-            total_issues = Issue.issue_objects.filter(
-                issue_cycle__cycle_id=cycle_id,
-                issue_cycle__deleted_at__isnull=True,
-                workspace__slug=slug,
-                project_id=project_id,
-            ).count()
+            progress_counts = cycle_progress_issue_counts(cycle_id, slug, project_id)
+            backlog_issues = progress_counts["backlog_issues"]
+            unstarted_issues = progress_counts["unstarted_issues"]
+            started_issues = progress_counts["started_issues"]
+            cancelled_issues = progress_counts["cancelled_issues"]
+            completed_issues = progress_counts["completed_issues"]
+            total_issues = progress_counts["total_issues"]
 
         return Response(
             {
@@ -810,14 +777,7 @@ class CycleAnalyticsEndpoint(BaseAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # this will tell whether the issues were transferred to the new cycle
-        """ 
-        if the issues were transferred to the new cycle, then the progress_snapshot will be present
-        return the progress_snapshot data in the analytics for each date
-            
-        else issues were not transferred to the new cycle then generate the stats from the cycle issue bridge tables
-        """
-
+        # If transferred issues exist for this cycle, use the saved snapshot directly.
         if cycle.progress_snapshot:
             distribution = cycle.progress_snapshot.get("distribution", {})
             return Response(
@@ -841,198 +801,21 @@ class CycleAnalyticsEndpoint(BaseAPIView):
         completion_chart = {}
 
         if analytic_type == "points" and estimate_type:
-            assignee_distribution = (
-                Issue.issue_objects.filter(
-                    issue_cycle__cycle_id=cycle_id,
-                    issue_cycle__deleted_at__isnull=True,
-                    workspace__slug=slug,
-                    project_id=project_id,
-                )
-                .annotate(display_name=F("assignees__display_name"))
-                .annotate(assignee_id=F("assignees__id"))
-                .annotate(
-                    avatar_url=Case(
-                        # If `avatar_asset` exists, use it to generate the asset URL
-                        When(
-                            assignees__avatar_asset__isnull=False,
-                            then=Concat(
-                                Value("/api/assets/v2/static/"),
-                                "assignees__avatar_asset",  # Assuming avatar_asset has an id or relevant field
-                                Value("/"),
-                            ),
-                        ),
-                        # If `avatar_asset` is None, fall back to using `avatar` field directly
-                        When(
-                            assignees__avatar_asset__isnull=True,
-                            then="assignees__avatar",
-                        ),
-                        default=Value(None),
-                        output_field=models.CharField(),
-                    )
-                )
-                .values("display_name", "assignee_id", "avatar_url")
-                .annotate(total_estimates=Sum(Cast("estimate_point__value", FloatField())))
-                .annotate(
-                    completed_estimates=Sum(
-                        Cast("estimate_point__value", FloatField()),
-                        filter=Q(
-                            completed_at__isnull=False,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .annotate(
-                    pending_estimates=Sum(
-                        Cast("estimate_point__value", FloatField()),
-                        filter=Q(
-                            completed_at__isnull=True,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .order_by("display_name")
-            )
-
-            label_distribution = (
-                Issue.issue_objects.filter(
-                    issue_cycle__cycle_id=cycle_id,
-                    issue_cycle__deleted_at__isnull=True,
-                    workspace__slug=slug,
-                    project_id=project_id,
-                )
-                .annotate(label_name=F("labels__name"))
-                .annotate(color=F("labels__color"))
-                .annotate(label_id=F("labels__id"))
-                .values("label_name", "color", "label_id")
-                .annotate(total_estimates=Sum(Cast("estimate_point__value", FloatField())))
-                .annotate(
-                    completed_estimates=Sum(
-                        Cast("estimate_point__value", FloatField()),
-                        filter=Q(
-                            completed_at__isnull=False,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .annotate(
-                    pending_estimates=Sum(
-                        Cast("estimate_point__value", FloatField()),
-                        filter=Q(
-                            completed_at__isnull=True,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .order_by("label_name")
-            )
-            completion_chart = burndown_plot(
-                queryset=cycle,
+            assignee_distribution = assignee_distribution_points(cycle_id, slug, project_id)
+            label_distribution = label_distribution_points(cycle_id, slug, project_id)
+            completion_chart = completion_chart_for_cycle(
+                cycle=cycle,
                 slug=slug,
                 project_id=project_id,
-                plot_type="points",
                 cycle_id=cycle_id,
+                plot_type="points",
             )
 
         if analytic_type == "issues":
-            assignee_distribution = (
-                Issue.issue_objects.filter(
-                    issue_cycle__cycle_id=cycle_id,
-                    issue_cycle__deleted_at__isnull=True,
-                    project_id=project_id,
-                    workspace__slug=slug,
-                )
-                .annotate(display_name=F("assignees__display_name"))
-                .annotate(assignee_id=F("assignees__id"))
-                .annotate(
-                    avatar_url=Case(
-                        # If `avatar_asset` exists, use it to generate the asset URL
-                        When(
-                            assignees__avatar_asset__isnull=False,
-                            then=Concat(
-                                Value("/api/assets/v2/static/"),
-                                "assignees__avatar_asset",  # Assuming avatar_asset has an id or relevant field
-                                Value("/"),
-                            ),
-                        ),
-                        # If `avatar_asset` is None, fall back to using `avatar` field directly
-                        When(
-                            assignees__avatar_asset__isnull=True,
-                            then="assignees__avatar",
-                        ),
-                        default=Value(None),
-                        output_field=models.CharField(),
-                    )
-                )
-                .values("display_name", "assignee_id", "avatar_url")
-                .annotate(
-                    total_issues=Count(
-                        "assignee_id",
-                        filter=Q(archived_at__isnull=True, is_draft=False),
-                    )
-                )
-                .annotate(
-                    completed_issues=Count(
-                        "assignee_id",
-                        filter=Q(
-                            completed_at__isnull=False,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .annotate(
-                    pending_issues=Count(
-                        "assignee_id",
-                        filter=Q(
-                            completed_at__isnull=True,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .order_by("display_name")
-            )
-
-            label_distribution = (
-                Issue.issue_objects.filter(
-                    issue_cycle__cycle_id=cycle_id,
-                    issue_cycle__deleted_at__isnull=True,
-                    project_id=project_id,
-                    workspace__slug=slug,
-                )
-                .annotate(label_name=F("labels__name"))
-                .annotate(color=F("labels__color"))
-                .annotate(label_id=F("labels__id"))
-                .values("label_name", "color", "label_id")
-                .annotate(total_issues=Count("label_id", filter=Q(archived_at__isnull=True, is_draft=False)))
-                .annotate(
-                    completed_issues=Count(
-                        "label_id",
-                        filter=Q(
-                            completed_at__isnull=False,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .annotate(
-                    pending_issues=Count(
-                        "label_id",
-                        filter=Q(
-                            completed_at__isnull=True,
-                            archived_at__isnull=True,
-                            is_draft=False,
-                        ),
-                    )
-                )
-                .order_by("label_name")
-            )
-            completion_chart = burndown_plot(
-                queryset=cycle,
+            assignee_distribution = assignee_distribution_issues(cycle_id, slug, project_id)
+            label_distribution = label_distribution_issues(cycle_id, slug, project_id)
+            completion_chart = completion_chart_for_cycle(
+                cycle=cycle,
                 slug=slug,
                 project_id=project_id,
                 cycle_id=cycle_id,
