@@ -125,7 +125,7 @@ def extract_mentions(issue_instance):
         mentions = [mention_tag["entity_identifier"] for mention_tag in mention_tags]
 
         return list(set(mentions))
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError, AttributeError):
         return []
 
 
@@ -138,7 +138,7 @@ def extract_comment_mentions(comment_value):
         for mention_tag in mentions_tags:
             mentions.append(mention_tag["entity_identifier"])
         return list(set(mentions))
-    except Exception:
+    except (TypeError, ValueError, KeyError, AttributeError):
         return []
 
 
@@ -307,16 +307,22 @@ def notifications(
             ).values_list("assignee", flat=True)
 
             issue_subscribers = list(set(issue_subscribers) - {uuid.UUID(actor_id)})
+            subscriber_preferences = {
+                preference.user_id: preference
+                for preference in UserNotificationPreference.objects.filter(user_id__in=issue_subscribers)
+            }
 
-            for subscriber in issue_subscribers:
-                if issue.created_by_id and issue.created_by_id == subscriber:
+            for recipient_id in issue_subscribers:
+                if issue.created_by_id and issue.created_by_id == recipient_id:
                     sender = "in_app:issue_activities:created"
-                elif subscriber in issue_assignees and issue.created_by_id not in issue_assignees:
+                elif recipient_id in issue_assignees and issue.created_by_id not in issue_assignees:
                     sender = "in_app:issue_activities:assigned"
                 else:
                     sender = "in_app:issue_activities:subscribed"
 
-                preference = UserNotificationPreference.objects.get(user_id=subscriber)
+                preference = subscriber_preferences.get(recipient_id)
+                if preference is None:
+                    continue
 
                 for issue_activity in issue_activities_created:
                     # If activity done in blocking then blocked by email should not go
@@ -366,7 +372,7 @@ def notifications(
                             workspace=project.workspace,
                             sender=sender,
                             triggered_by_id=actor_id,
-                            receiver_id=subscriber,
+                            receiver_id=recipient_id,
                             entity_identifier=issue_id,
                             entity_name="issue",
                             project=project,
@@ -409,7 +415,7 @@ def notifications(
                         bulk_email_logs.append(
                             EmailNotificationLog(
                                 triggered_by_id=actor_id,
-                                receiver_id=subscriber,
+                                receiver_id=recipient_id,
                                 entity_identifier=issue_id,
                                 entity_name="issue",
                                 data={
@@ -461,10 +467,18 @@ def notifications(
             last_activity = IssueActivity.objects.filter(issue_id=issue_id).order_by("-created_at").first()
 
             actor = User.objects.get(pk=actor_id)
+            mention_preferences = {
+                preference.user_id: preference
+                for preference in UserNotificationPreference.objects.filter(
+                    user_id__in=list(set(comment_mentions + new_mentions))
+                )
+            }
 
             for mention_id in comment_mentions:
                 if mention_id != actor_id:
-                    preference = UserNotificationPreference.objects.get(user_id=mention_id)
+                    preference = mention_preferences.get(mention_id)
+                    if preference is None:
+                        continue
                     for issue_activity in issue_activities_created:
                         notification = create_mention_notification(
                             project=project,
@@ -521,7 +535,9 @@ def notifications(
 
             for mention_id in new_mentions:
                 if mention_id != actor_id:
-                    preference = UserNotificationPreference.objects.get(user_id=mention_id)
+                    preference = mention_preferences.get(mention_id)
+                    if preference is None:
+                        continue
                     if (
                         last_activity is not None
                         and last_activity.field == "description"
@@ -556,13 +572,13 @@ def notifications(
                                         "new_value": str(last_activity.new_value),
                                         "old_value": str(last_activity.old_value),
                                         "old_identifier": (
-                                            str(issue_activity.get("old_identifier"))
-                                            if issue_activity.get("old_identifier")
+                                            str(last_activity.old_identifier)
+                                            if last_activity.old_identifier
                                             else None
                                         ),
                                         "new_identifier": (
-                                            str(issue_activity.get("new_identifier"))
-                                            if issue_activity.get("new_identifier")
+                                            str(last_activity.new_identifier)
+                                            if last_activity.new_identifier
                                             else None
                                         ),
                                     },
@@ -573,7 +589,7 @@ def notifications(
                             bulk_email_logs.append(
                                 EmailNotificationLog(
                                     triggered_by_id=actor_id,
-                                    receiver_id=subscriber,
+                                    receiver_id=mention_id,
                                     entity_identifier=issue_id,
                                     entity_name="issue",
                                     data={
@@ -593,13 +609,13 @@ def notifications(
                                             "new_value": str(last_activity.new_value),
                                             "old_value": str(last_activity.old_value),
                                             "old_identifier": (
-                                                str(issue_activity.get("old_identifier"))
-                                                if issue_activity.get("old_identifier")
+                                                str(last_activity.old_identifier)
+                                                if last_activity.old_identifier
                                                 else None
                                             ),
                                             "new_identifier": (
-                                                str(issue_activity.get("new_identifier"))
-                                                if issue_activity.get("new_identifier")
+                                                str(last_activity.new_identifier)
+                                                if last_activity.new_identifier
                                                 else None
                                             ),
                                             "activity_time": str(last_activity.created_at),
@@ -622,7 +638,7 @@ def notifications(
                                 bulk_email_logs.append(
                                     EmailNotificationLog(
                                         triggered_by_id=actor_id,
-                                        receiver_id=subscriber,
+                                        receiver_id=mention_id,
                                         entity_identifier=issue_id,
                                         entity_name="issue",
                                         data={
